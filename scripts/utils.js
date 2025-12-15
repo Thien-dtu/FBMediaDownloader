@@ -1,0 +1,137 @@
+import fetch from "node-fetch";
+import https from "https";
+import fs from "fs";
+import { FB_API_HOST } from "./constants.js";
+import { ACCESS_TOKEN } from "../config.js";
+import { log } from "./logger.js";
+
+// Dùng FB API lấy link hình ảnh có độ phân giải lớn nhất từ id ảnh truyền vào
+// Trả về undefined nếu không tìm thấy
+export const getLargestPhotoLink = async (photo_id) => {
+  let url = `${FB_API_HOST}/${photo_id}?fields=largest_image&access_token=${ACCESS_TOKEN}`;
+  const json = await myFetch(url);
+  return json?.largest_image?.source;
+};
+
+export const myFetch = async (_url) => {
+  try {
+    const response = await fetch(_url);
+    const json = await response.json();
+    if (json.error) {
+      log("[!] ERROR", JSON.stringify(json, null, 4));
+      return null;
+    }
+    return json;
+  } catch (e) {
+    log("[!] ERROR", e.toString());
+    return null;
+  }
+};
+
+export const sleep = (ms) => {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+};
+
+export const checkFileExist = (fileDir) => fs.existsSync(fileDir);
+
+export const deleteFile = (fileDir) =>
+  checkFileExist(fileDir) && fs.unlinkSync(fileDir);
+
+export const createIfNotExistDir = (dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    log(`> Đã tạo thư mục ${dir}.`);
+  }
+};
+
+export const saveToFile = (fileName, data, override = false) => {
+  try {
+    fs.writeFileSync(fileName, data, { flag: override ? "w+" : "a+" });
+    log(`> Đã lưu vào file ${fileName}`);
+  } catch (err) {
+    console.error("[!] ERROR: ", err);
+  }
+};
+
+export const download = (url, destination) =>
+  new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destination);
+    https
+      .get(url, (response) => {
+        response.pipe(file);
+        file.on("finish", () => {
+          file.close(resolve(true));
+        });
+      })
+      .on("error", (error) => {
+        fs.unlinkSync(destination);
+        reject(error.message);
+      });
+  });
+
+/**
+ * Parse comma-separated user IDs for batch downloads
+ * @param {string} input - Comma-separated IDs (e.g., "123, 456, 789")
+ * @returns {string[]} Array of trimmed IDs
+ */
+export const parseUserIds = (input) => {
+  if (!input || typeof input !== 'string') {
+    return [];
+  }
+
+  return input
+    .split(',')
+    .map(id => id.trim())
+    .filter(id => id.length > 0);
+};
+
+/**
+ * Sanitize folder/file name by removing invalid characters
+ * @param {string} name - Folder or file name
+ * @returns {string} Sanitized name safe for filesystem
+ */
+export const sanitizeFolderName = (name) => {
+  if (!name || typeof name !== 'string') {
+    return '(no name)';
+  }
+
+  // Replace invalid Windows filename characters: < > : " / \ | ? *
+  // Also replace newlines and tabs
+  let sanitized = name
+    .replace(/[<>:"\/\\|?*\r\n\t]/g, '_')
+    .replace(/\s+/g, ' ')  // Replace multiple spaces with single space
+    .trim();
+
+  // Limit length to 100 characters (Windows path limit is 260 total)
+  if (sanitized.length > 100) {
+    sanitized = sanitized.substring(0, 100);
+  }
+
+  // If empty after sanitization, use default
+  if (!sanitized) {
+    return '(no name)';
+  }
+
+  return sanitized;
+};
+
+/**
+ * Save caption/description as a text file next to media file
+ * @param {string} mediaPath - Path to media file (without extension)
+ * @param {string} caption - Caption/description text
+ */
+export const saveCaptionFile = (mediaPath, caption) => {
+  if (!caption || typeof caption !== 'string' || !caption.trim()) {
+    return; // Don't create file for empty captions
+  }
+
+  try {
+    const captionPath = `${mediaPath}.txt`;
+    fs.writeFileSync(captionPath, caption.trim(), 'utf8');
+  } catch (error) {
+    // Silently fail - caption is nice to have but not critical
+    console.error(`Failed to save caption: ${error.message}`);
+  }
+};
