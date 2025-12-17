@@ -10,7 +10,10 @@ import { FB_API_HOST, S } from "./constants.js";
 import { t } from "./lang.js";
 import { log } from "./logger.js";
 import { createIfNotExistDir, download, myFetch, sleep, sanitizeFolderName, saveCaptionFile } from "./utils.js";
-import { getOrCreateUser, getMediaStatus, saveMedia } from "./database.js";
+import { getOrCreateUser, saveMedia } from "./database.js";
+import { checkMediaSkip, logDownloadSummary } from "./download_helpers.js";
+import { runBatchDownload } from "./batch_utils.js";
+import { isCancelled, throwIfCancelled } from "./cancellation.js";
 
 const fetchUserPhotos = async ({
   targetId,
@@ -27,6 +30,12 @@ const fetchUserPhotos = async ({
   }
 
   while (url && page <= pageLimit) {
+    // Check for cancellation before each page fetch
+    if (isCancelled()) {
+      log(S.FgYellow + `⏸️  Stopping at page ${page - 1} (cancelled)` + S.Reset);
+      break;
+    }
+
     log(t("downloadingPage").replace("{page}", page));
     const fetchData = await myFetch(url);
     page++;
@@ -83,14 +92,11 @@ export const downloadUserPhotos = async ({
         const savePath = `${albumDir}/${id}.${PHOTO_FILE_FORMAT}`;
 
         // Smart skip: check DB status only
-        if (DATABASE_ENABLED && userId) {
-          const mediaStatus = getMediaStatus(userId, id);
-
-          if (mediaStatus?.exists) {
-            log(`⏭️  SKIPPING ${id} (already downloaded${mediaStatus.isHd ? ', HD' : ''})`);
-            skipped++;
-            continue;
-          }
+        const skipCheck = checkMediaSkip(userId, id, false);
+        if (skipCheck.skip) {
+          log(`⏭️  SKIPPING ${id} (${skipCheck.reason})`);
+          skipped++;
+          continue;
         }
 
         createIfNotExistDir(albumDir);
@@ -128,85 +134,14 @@ export const downloadUserPhotos = async ({
   });
 
   // Log summary
-  log(`\n📊 Summary: ${saved} photos saved, ${skipped} skipped (duplicates)`);
+  logDownloadSummary({ saved, skipped, mediaType: 'photos' });
 
   return { saved, skipped };
 };
 
 // ========== BATCH DOWNLOAD SUPPORT ==========
 export const downloadUserPhotosBatch = async (userIds, options) => {
-  const results = [];
-  const totalUsers = userIds.length;
-  const startTime = Date.now();
-
-  console.log(`\n📦 Processing ${totalUsers} user(s)...\n`);
-
-  for (let i = 0; i < totalUsers; i++) {
-    const userId = userIds[i];
-    console.log(`[${i + 1}/${totalUsers}] Downloading photos from user ${userId}...`);
-
-    try {
-      const result = await downloadUserPhotos({
-        targetId: userId,
-        ...options
-      });
-
-      results.push({
-        userId,
-        success: true,
-        ...result
-      });
-
-      console.log(`✅ User ${userId}: ${result.saved} saved, ${result.skipped} skipped`);
-
-    } catch (error) {
-      results.push({
-        userId,
-        success: false,
-        error: error.message
-      });
-
-      console.log(`❌ User ${userId}: ${error.message}`);
-    }
-
-    // Small delay between users to avoid rate limiting
-    if (i < totalUsers - 1) {
-      await sleep(1000);
-    }
-  }
-
-  // Print summary
-  printBatchSummary(results, startTime);
-
-  return results;
-};
-
-const printBatchSummary = (results, startTime) => {
-  const successful = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
-  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-
-  console.log('\n' + '='.repeat(50));
-  console.log('BATCH SUMMARY'.padStart(32));
-  console.log('='.repeat(50));
-  console.log(`Total Users: ${results.length}`);
-  console.log(`Successful: ${successful.length}`);
-  console.log(`Failed: ${failed.length}`);
-
-  if (successful.length > 0) {
-    const totalSaved = successful.reduce((sum, r) => sum + (r.saved || 0), 0);
-    const totalSkipped = successful.reduce((sum, r) => sum + (r.skipped || 0), 0);
-    console.log(`Total Photos Downloaded: ${totalSaved}`);
-    console.log(`Total Skipped (duplicates): ${totalSkipped}`);
-  }
-
-  if (failed.length > 0) {
-    console.log('\nFailed Users:');
-    failed.forEach(r => {
-      console.log(`  - ${r.userId}: ${r.error}`);
-    });
-  }
-
-  console.log(`Time Elapsed: ${duration}s`);
-  console.log('='.repeat(50) + '\n');
+  return runBatchDownload(userIds, downloadUserPhotos, options, {
+    mediaType: 'photos'
+  });
 };

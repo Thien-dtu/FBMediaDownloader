@@ -16,6 +16,10 @@ import {
 import { download, createIfNotExistDir, parseUserIds } from "./utils.js";
 import { LANGKEY, setLang, t } from "./lang.js";
 import { log } from "./logger.js";
+import { getAllUIDs, initDatabase } from "./database.js";
+import { ensureUsername, scanAllUIDs } from "./user_info.js";
+import { checkAllProxies, reorderByLatency, isProxyEnabled, getProxyStats, toggleProxy } from "./proxy_manager.js";
+import { runCancellable } from "./cancellation.js";
 
 // https://stackoverflow.com/a/68504470
 const rl = readline.createInterface({
@@ -51,6 +55,16 @@ const choose = async (title, menu_items) => {
   }
 };
 
+/**
+ * Ensure usernames are fetched for all given UIDs before proceeding
+ * @param {string[]} uids - Array of UIDs
+ */
+const ensureUsernamesForUIDs = async (uids) => {
+  for (const uid of uids) {
+    await ensureUsername(uid);
+  }
+};
+
 // ========================================== MENU =========================================
 const menuDownloadAlbum = async () => {
   while (true) {
@@ -74,17 +88,22 @@ const menuDownloadAlbum = async () => {
           log(t("saveHDLinkNotSupported"));
         }
 
-        action.key == 1
-          ? await downloadAlbumPhoto({
-            albumId: album_id,
-            fromPhotoId: from_photo_id,
-            isGetLargestPhoto: is_largest_photo,
-          })
-          : await downloadAlbumPhotoLinks({
-            albumId: album_id,
-            fromPhotoId: from_photo_id,
-            isGetLargestPhoto: is_largest_photo,
-          });
+        // Wrap download in cancellable operation
+        await runCancellable(async () => {
+          if (action.key == 1) {
+            await downloadAlbumPhoto({
+              albumId: album_id,
+              fromPhotoId: from_photo_id,
+              isGetLargestPhoto: is_largest_photo,
+            });
+          } else {
+            await downloadAlbumPhotoLinks({
+              albumId: album_id,
+              fromPhotoId: from_photo_id,
+              isGetLargestPhoto: is_largest_photo,
+            });
+          }
+        });
       }
     }
   }
@@ -110,6 +129,9 @@ const menuDownloadWallMedia = async () => {
           continue;
         }
 
+        // Auto-fetch usernames for all target IDs
+        await ensureUsernamesForUIDs(target_ids);
+
         const page_limit = await prompt(t("howManyPageWall"));
         if (page_limit >= 0) {
           const include_video = await prompt(t("downloadVideoWall"));
@@ -126,25 +148,28 @@ const menuDownloadWallMedia = async () => {
             isGetLargestPhoto: is_largest_photo,
           };
 
-          if (action.key == 1) {
-            // Download media (not links)
-            if (target_ids.length > 1) {
-              // Batch mode
-              await downloadWallMediaBatch(target_ids, options);
+          // Wrap download in cancellable operation
+          await runCancellable(async () => {
+            if (action.key == 1) {
+              // Download media (not links)
+              if (target_ids.length > 1) {
+                // Batch mode
+                await downloadWallMediaBatch(target_ids, options);
+              } else {
+                // Single user
+                await downloadWallMedia({
+                  targetId: target_ids[0],
+                  ...options
+                });
+              }
             } else {
-              // Single user
-              await downloadWallMedia({
-                targetId: target_ids[0],
+              // Download links - batch not needed for links
+              await downloadWallMediaLinks({
+                targetId: target_ids[0], // Only use first ID for links
                 ...options
               });
             }
-          } else {
-            // Download links - batch not needed for links
-            await downloadWallMediaLinks({
-              targetId: target_ids[0], // Only use first ID for links
-              ...options
-            });
-          }
+          });
         }
       }
     }
@@ -171,6 +196,9 @@ const menuDownloadPhotoVideoOfUser = async () => {
           continue;
         }
 
+        // Auto-fetch usernames for all target IDs
+        await ensureUsernamesForUIDs(target_ids);
+
         const from_cursor = await prompt(t("startPageUser"));
         const page_limit = await prompt(t("howManyPageUser"));
 
@@ -180,17 +208,24 @@ const menuDownloadPhotoVideoOfUser = async () => {
             pageLimit: page_limit == 0 ? Infinity : page_limit,
           };
 
-          // Use batch download for multiple users
-          if (target_ids.length > 1) {
-            action.key == 1
-              ? await downloadUserPhotosBatch(target_ids, options)
-              : await downloadUserVideosBatch(target_ids, options);
-          } else {
-            // Single user - original function
-            action.key == 1
-              ? await downloadUserPhotos({ targetId: target_ids[0], ...options })
-              : await downloadUserVideos({ targetId: target_ids[0], ...options });
-          }
+          // Wrap download in cancellable operation
+          await runCancellable(async () => {
+            // Use batch download for multiple users
+            if (target_ids.length > 1) {
+              if (action.key == 1) {
+                await downloadUserPhotosBatch(target_ids, options);
+              } else {
+                await downloadUserVideosBatch(target_ids, options);
+              }
+            } else {
+              // Single user - original function
+              if (action.key == 1) {
+                await downloadUserPhotos({ targetId: target_ids[0], ...options });
+              } else {
+                await downloadUserVideos({ targetId: target_ids[0], ...options });
+              }
+            }
+          });
         }
       }
     }
@@ -250,6 +285,9 @@ const menuSelectLanguage = async () => {
 };
 
 export const menu = async () => {
+  // Initialize database for UID listing
+  initDatabase();
+
   while (true) {
     const action = await choose("FB Media Downloader Tool", {
       1: t("albumInfo"),
@@ -260,7 +298,10 @@ export const menu = async () => {
       6: t("downloadFromUrlFile"),
       7: t("language"),
       8: t("help"),
-      9: t("exit"),
+      9: "Print all UIDs",
+      10: "Scan UIDs for usernames",
+      11: "Proxy Health Check",
+      12: t("exit"),
     });
     if (action.key == 1) {
       const album_id = await prompt(t("enterAlbumID"));
@@ -272,6 +313,9 @@ export const menu = async () => {
     if (action.key == 2) {
       const page_id = await prompt(t("enterPageID"));
       if (page_id != -1) {
+        // Auto-fetch username for the page ID
+        await ensureUsername(page_id);
+
         const timeline_album_id = await fetchTimeLineAlbumId_FBPage(page_id);
         if (timeline_album_id) {
           log(t("foundTimelineAlbumID"), timeline_album_id);
@@ -300,7 +344,121 @@ export const menu = async () => {
       log(t("contact"));
       await wait_for_key_pressed();
     }
-    if (action.key == 9) break;
+    if (action.key == 9) {
+      const uids = getAllUIDs();
+      if (uids.length === 0) {
+        log("No UIDs found in database.");
+      } else {
+        log(`\n📋 All UIDs (${uids.length} total):\n`);
+        log(uids.join(","));
+      }
+      await wait_for_key_pressed();
+    }
+    if (action.key == 10) {
+      const uid_input = await prompt("Enter UID(s) (comma-separated, or Enter to scan all): ");
+
+      if (uid_input && uid_input.trim()) {
+        // Parse comma-separated UIDs
+        const uids = parseUserIds(uid_input);
+
+        if (uids.length === 0) {
+          log("No valid UIDs entered.");
+        } else if (uids.length === 1) {
+          // Single UID mode
+          const uid = uids[0];
+          log(`\n🔍 Fetching username for UID: ${uid}...`);
+          const result = await ensureUsername(uid);
+          if (result.username) {
+            log(`✅ ${uid} → ${result.username}`);
+          } else {
+            log(`❌ Could not fetch username for ${uid}${result.error ? ': ' + result.error : ''}`);
+          }
+        } else {
+          // Multiple UIDs - batch mode
+          log(`\n🔍 Fetching usernames for ${uids.length} UIDs...\n`);
+          let fetched = 0, skipped = 0, errors = 0;
+
+          for (let i = 0; i < uids.length; i++) {
+            const uid = uids[i];
+            const result = await ensureUsername(uid);
+
+            if (result.username) {
+              if (result.fetched) {
+                log(`  [${i + 1}/${uids.length}] ✅ ${uid} → ${result.username}`);
+                fetched++;
+              } else {
+                log(`  [${i + 1}/${uids.length}] ⏭️ ${uid} → ${result.username} (already exists)`);
+                skipped++;
+              }
+            } else {
+              log(`  [${i + 1}/${uids.length}] ❌ ${uid} → Failed`);
+              errors++;
+            }
+
+            // Small delay between requests
+            if (i < uids.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 300));
+            }
+          }
+
+          log(`\n📊 Summary: ${fetched} fetched, ${skipped} already existed, ${errors} errors`);
+        }
+      } else {
+        // Scan all UIDs mode
+        log("\n🔍 Starting UID username scan for all UIDs...");
+        await scanAllUIDs((current, total, uid, username, status) => {
+          if (status === 'fetched') {
+            log(`  [${current}/${total}] ✅ ${uid} → ${username}`);
+          } else if (status === 'error') {
+            log(`  [${current}/${total}] ❌ ${uid} → Failed to fetch`);
+          }
+          // Skip logging for 'skipped' to avoid clutter
+        });
+      }
+      await wait_for_key_pressed();
+    }
+    if (action.key == 11) {
+      // Proxy Health Check
+      const stats = getProxyStats();
+      const proxyStatus = isProxyEnabled() ? '✅ ENABLED' : '❌ DISABLED';
+      log(`\n📊 Proxy Status: ${proxyStatus}`);
+      if (isProxyEnabled()) {
+        log(`   Loaded: ${stats.total} proxies, ${stats.failed} marked as failed`);
+        log(`   Current: ${stats.current || 'none'}`);
+      }
+
+      const healthAction = await choose("Proxy Management", {
+        0: t("back"),
+        1: isProxyEnabled() ? "🔴 Disable Proxy" : "🟢 Enable Proxy",
+        2: "Test all proxies",
+        3: "Test all & remove dead proxies",
+        4: "Test all & reorder by speed (fastest first)",
+      });
+
+      if (healthAction.key == 1) {
+        toggleProxy();
+      } else if (healthAction.key >= 2 && healthAction.key <= 4) {
+        if (!isProxyEnabled()) {
+          log("\n⚠️ Proxy is disabled. Enable it first to run health checks.");
+        } else {
+          const results = await checkAllProxies({
+            timeout: 10000,
+            removeDeadProxies: healthAction.key == 3,
+            onProgress: (current, total, result) => {
+              const status = result.success ? `✅ ${result.latency}ms` : `❌ ${result.error}`;
+              log(`  [${current}/${total}] ${status}`);
+            }
+          });
+
+          if (healthAction.key == 4 && results.healthy > 0) {
+            reorderByLatency(results);
+          }
+        }
+      }
+
+      await wait_for_key_pressed();
+    }
+    if (action.key == 12) break;
   }
 
   rl.close();

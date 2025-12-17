@@ -5,7 +5,6 @@ import {
   ID_LINK_SEPERATOR,
   FOLDER_TO_SAVE_LINKS,
   PHOTO_FILE_FORMAT,
-  WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO,
   DATABASE_ENABLED,
   PLATFORM_FACEBOOK,
   getSaveFolderPath,
@@ -21,7 +20,9 @@ import {
 } from "./utils.js";
 import { t } from "./lang.js";
 import { log } from "./logger.js";
-import { getOrCreateUser, getMediaStatus, saveMedia, updateMediaToHD } from "./database.js";
+import { getOrCreateUser } from "./database.js";
+import { checkMediaSkip, attemptHDFetch, saveMediaWithTracking, logDownloadSummary } from "./download_helpers.js";
+import { isCancelled } from "./cancellation.js";
 
 // Hàm này fetch và trả về 2 thứ:
 // 1. Toàn bộ link ảnh (max 100) từ 1 vị trí (cursor) nhất định trong album ảnh. Định dạng: [[{id: .., url: ...}, ...]
@@ -58,6 +59,12 @@ const fetchAlbumPhotos = async ({
   let allImgsData = [];
 
   while (hasNextCursor && currentPage <= pageLimit) {
+    // Check for cancellation before each page fetch
+    if (isCancelled()) {
+      log(S.FgYellow + `⏸️  Stopping at page ${currentPage - 1} (cancelled)` + S.Reset);
+      break;
+    }
+
     log(t("downloadingAlbum").replace("{page}", currentPage));
 
     const data = await fetchAlbumPhotosFromCursor({
@@ -194,40 +201,31 @@ export const downloadAlbumPhoto = async ({
         const savePath = `${dir}/${photo_id}.${PHOTO_FILE_FORMAT}`;
 
         // Smart skip: check DB status for HD upgrade
-        if (DATABASE_ENABLED && userId) {
-          const mediaStatus = getMediaStatus(userId, photo_id);
+        const skipCheck = checkMediaSkip(userId, photo_id, isGetLargestPhoto);
 
-          if (mediaStatus?.exists) {
-            // Check if we need HD upgrade
-            if (isGetLargestPhoto && !mediaStatus.isHd) {
-              log(`🔄 UPGRADE ${photo_id} to HD (was SD)`);
-              // Fall through to re-download in HD
-            } else {
-              log(`⏭️  SKIPPING ${photo_id} (already downloaded${mediaStatus.isHd ? ', HD' : ''})`);
-              skipped++;
-              continue;
-            }
-          }
+        if (skipCheck.skip) {
+          log(`⏭️  SKIPPING ${photo_id} (${skipCheck.reason})`);
+          skipped++;
+          continue;
+        }
+
+        if (skipCheck.needsUpgrade) {
+          log(`🔄 UPGRADE ${photo_id} to HD (was SD)`);
         }
 
         let isHdDownload = false;
-        let isUpgradeAttempt = false;
         if (isGetLargestPhoto) {
-          // Check if this is an upgrade (media already exists in SD)
-          const existingStatus = DATABASE_ENABLED && userId ? getMediaStatus(userId, photo_id) : null;
-          isUpgradeAttempt = existingStatus?.exists && !existingStatus?.isHd;
+          const hdResult = await attemptHDFetch(photo_id, userId, skipCheck.needsUpgrade);
 
-          await sleep(WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO);
-          log(t("fetchingHDPhoto").replace("media_id", photo_id));
-          const hdUrl = await getLargestPhotoLink(photo_id);
-          if (hdUrl) {
-            photo_url = hdUrl;
-            isHdDownload = true;
-          } else if (isUpgradeAttempt) {
-            // HD fetch failed during upgrade - skip, we already have SD
+          if (hdResult.shouldSkip) {
             log(`⏭️  SKIPPING ${photo_id} (HD fetch failed, keeping SD version)`);
             skipped++;
             continue;
+          }
+
+          if (hdResult.url) {
+            photo_url = hdResult.url;
+            isHdDownload = true;
           }
         }
 
@@ -238,18 +236,7 @@ export const downloadAlbumPhoto = async ({
           await download(photo_url, savePath);
 
           // Mark as downloaded in database with HD status
-          if (DATABASE_ENABLED && userId) {
-            const existingStatus = getMediaStatus(userId, photo_id);
-            if (existingStatus?.exists) {
-              // Only update to HD if HD fetch actually succeeded
-              if (isHdDownload) {
-                updateMediaToHD(userId, photo_id, savePath);
-              }
-              // If HD fetch failed, leave the record as-is (still SD)
-            } else {
-              saveMedia(userId, photo_id, isHdDownload, savePath);
-            }
-          }
+          saveMediaWithTracking(userId, photo_id, isHdDownload, savePath, skipCheck.needsUpgrade);
 
           saved++;
         } catch (e) {
@@ -263,7 +250,7 @@ export const downloadAlbumPhoto = async ({
   });
 
   // Log summary
-  log(`\n📊 Summary: ${saved} photos saved, ${skipped} skipped (duplicates)`);
+  logDownloadSummary({ saved, skipped, mediaType: 'photos' });
 
   return { saved, skipped };
 };

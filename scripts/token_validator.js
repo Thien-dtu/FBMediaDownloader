@@ -1,7 +1,6 @@
 import fetch from 'node-fetch';
 import { FB_API_HOST, S } from './constants.js';
-import { PLATFORM_FACEBOOK } from '../config.js';
-import { saveToken, getActiveToken } from './database.js';
+import { ACCESS_TOKEN, PLATFORM_FACEBOOK } from '../config.js';
 import { log } from './logger.js';
 import { getSharedReadline } from './shared_readline.js';
 
@@ -91,6 +90,166 @@ export const checkRequiredPermissions = (permissions) => {
 };
 
 /**
+ * Permission descriptions in Vietnamese
+ */
+const PERMISSION_DESCRIPTIONS = {
+    // User data
+    'user_photos': 'Ảnh của người dùng',
+    'user_posts': 'Bài đăng của người dùng',
+    'user_videos': 'Video của người dùng',
+    'user_about_me': 'Thông tin giới thiệu bản thân',
+    'user_birthday': 'Ngày sinh',
+    'user_education_history': 'Lịch sử học vấn',
+    'user_events': 'Sự kiện của người dùng',
+    'user_friends': 'Danh sách bạn bè',
+    'user_hometown': 'Quê quán',
+    'user_likes': 'Các trang đã thích',
+    'user_location': 'Vị trí hiện tại',
+    'user_messenger_contact': 'Liên hệ Messenger',
+    'user_relationship_details': 'Chi tiết mối quan hệ',
+    'user_relationships': 'Tình trạng mối quan hệ',
+    'user_religion_politics': 'Tôn giáo và chính trị',
+    'user_website': 'Website cá nhân',
+    'user_work_history': 'Lịch sử công việc',
+    'user_managed_groups': 'Nhóm do người dùng quản lý',
+    'user_age_range': 'Độ tuổi',
+    'user_gender': 'Giới tính',
+    'user_link': 'Liên kết hồ sơ',
+    'user_groups': 'Nhóm',
+
+    // Profile & Auth
+    'public_profile': 'Thông tin công khai (tên, ảnh đại diện)',
+    'email': 'Địa chỉ email',
+    'openid': 'Xác thực OpenID',
+    'offline_access': 'Truy cập ngoại tuyến (token dài hạn)',
+
+    // Ads
+    'ads_management': 'Quản lý quảng cáo',
+    'ads_read': 'Đọc quảng cáo',
+    'attribution_read': 'Đọc dữ liệu phân bổ quảng cáo',
+    'read_ads_dataset_quality': 'Đọc chất lượng dataset quảng cáo',
+    'paid_marketing_messages': 'Tin nhắn marketing trả phí',
+
+    // Business
+    'business_management': 'Quản lý doanh nghiệp',
+    'business_creative_transfer': 'Chuyển nội dung sáng tạo doanh nghiệp',
+
+    // Commerce
+    'catalog_management': 'Quản lý danh mục sản phẩm',
+    'commerce_account_manage_orders': 'Quản lý đơn hàng',
+    'commerce_account_read_orders': 'Đọc đơn hàng',
+    'commerce_account_read_reports': 'Đọc báo cáo thương mại',
+    'commerce_account_read_settings': 'Đọc cài đặt thương mại',
+
+    // Pages
+    'pages_show_list': 'Xem danh sách trang quản lý',
+    'pages_read_engagement': 'Đọc tương tác trang',
+    'pages_read_user_content': 'Đọc nội dung người dùng trên trang',
+    'pages_manage_posts': 'Quản lý bài đăng trang',
+    'pages_manage_ads': 'Quản lý quảng cáo trang',
+    'pages_manage_cta': 'Quản lý nút kêu gọi hành động',
+    'pages_manage_engagement': 'Quản lý tương tác trang',
+    'pages_manage_instant_articles': 'Quản lý bài viết tức thì',
+    'pages_manage_metadata': 'Quản lý metadata trang',
+    'pages_manage_store_location': 'Quản lý vị trí cửa hàng',
+    'pages_messaging': 'Nhắn tin từ trang',
+    'pages_messaging_phone_number': 'Nhắn tin qua số điện thoại',
+    'pages_messaging_subscriptions': 'Đăng ký nhắn tin trang',
+    'pages_utility_messaging': 'Tin nhắn tiện ích trang',
+    'page_events': 'Sự kiện của trang',
+    'page_store_location_read': 'Đọc vị trí cửa hàng',
+    'read_page_mailboxes': 'Đọc hộp thư trang',
+    'publish_to_groups': 'Đăng lên nhóm',
+    'publish_pages': 'Đăng lên trang',
+
+    // Insights
+    'read_insights': 'Đọc thống kê',
+    'read_audience_network_insights': 'Đọc thống kê Audience Network',
+
+    // Instagram
+    'instagram_basic': 'Truy cập Instagram cơ bản',
+    'instagram_content_publish': 'Đăng nội dung Instagram',
+    'instagram_manage_comments': 'Quản lý bình luận Instagram',
+    'instagram_manage_insights': 'Thống kê Instagram',
+    'instagram_manage_events': 'Quản lý sự kiện Instagram',
+    'instagram_manage_messages': 'Quản lý tin nhắn Instagram',
+    'instagram_manage_upcoming_events': 'Sự kiện sắp tới Instagram',
+    'instagram_shopping_tag_products': 'Gắn thẻ sản phẩm Shopping',
+    'instagram_branded_content_ads_brand': 'Quảng cáo nội dung thương hiệu',
+    'instagram_branded_content_brand': 'Nội dung thương hiệu (Brand)',
+    'instagram_branded_content_creator': 'Nội dung thương hiệu (Creator)',
+    'instagram_creator_marketplace_discovery': 'Khám phá Creator Marketplace',
+    'instagram_creator_marketplace_messaging': 'Nhắn tin Creator Marketplace',
+
+    // Threads
+    'threads_business_basic': 'Threads Business cơ bản',
+    'threads_location_tagging': 'Gắn thẻ vị trí Threads',
+    'threads_profile_discovery': 'Khám phá hồ sơ Threads',
+
+    // WhatsApp
+    'whatsapp_business_manage_events': 'Quản lý sự kiện WhatsApp',
+    'whatsapp_business_management': 'Quản lý WhatsApp Business',
+    'whatsapp_business_messaging': 'Nhắn tin WhatsApp Business',
+
+    // Other
+    'gaming_user_locale': 'Ngôn ngữ người dùng game',
+    'leads_retrieval': 'Truy xuất khách hàng tiềm năng',
+    'manage_app_solution': 'Quản lý giải pháp ứng dụng',
+    'manage_fundraisers': 'Quản lý chiến dịch gây quỹ',
+    'private_computation_access': 'Truy cập tính toán riêng tư',
+    'publish_video': 'Đăng video',
+    'read_custom_friendlists': 'Đọc danh sách bạn bè tùy chỉnh',
+    'rsvp_event': 'Phản hồi sự kiện',
+    'test_expanded_granular': 'Quyền kiểm tra (dev)',
+    'xmpp_login': 'Đăng nhập XMPP (chat)',
+    'facebook_creator_marketplace_discovery': 'Khám phá Creator Marketplace FB',
+};
+
+/**
+ * Display comprehensive token status at startup
+ * @param {string} token - Access token
+ * @param {object} validation - Validation result from validateTokenWithAPI
+ * @param {Array} permissions - Array of granted permissions
+ */
+export const displayTokenStatus = (token, validation, permissions) => {
+    console.log('\n' + S.FgCyan + '━'.repeat(70) + S.Reset);
+    console.log(S.FgCyan + '  🔑 ACCESS TOKEN STATUS' + S.Reset);
+    console.log(S.FgCyan + '━'.repeat(70) + S.Reset);
+
+    // Token validity
+    if (validation.valid) {
+        console.log(S.FgGreen + '  ✅ Status: VALID' + S.Reset);
+        console.log(`  👤 User: ${validation.user.name}`);
+        console.log(`  🆔 User ID: ${validation.user.id}`);
+    } else {
+        console.log(S.BgRed + '  ❌ Status: INVALID' + S.Reset);
+        console.log(S.FgRed + `  Error: ${validation.error}` + S.Reset);
+        console.log(S.FgCyan + '━'.repeat(70) + S.Reset + '\n');
+        return;
+    }
+
+    // Token preview (masked)
+    const tokenPreview = token.substring(0, 10) + '...' + token.substring(token.length - 10);
+    console.log(`  🔐 Token: ${tokenPreview}`);
+
+    // Permissions - show ALL with Vietnamese descriptions
+    console.log('\n  📋 Permissions (' + permissions.length + ' total):');
+    console.log(S.FgCyan + '  ' + '─'.repeat(66) + S.Reset);
+
+    // Sort permissions alphabetically
+    const sortedPerms = [...permissions].sort((a, b) => a.localeCompare(b));
+
+    sortedPerms.forEach(perm => {
+        const description = PERMISSION_DESCRIPTIONS[perm] || 'Quyền Facebook';
+        const icon = S.FgGreen + '✓' + S.Reset;
+        const permDisplay = perm.padEnd(38);
+        console.log(`     ${icon} ${permDisplay} ${description}`);
+    });
+
+    console.log(S.FgCyan + '━'.repeat(70) + S.Reset + '\n');
+};
+
+/**
  * Interactive token input with masking
  * @returns {Promise<string>} Entered token
  */
@@ -171,91 +330,40 @@ export const validateAndSaveToken = async (token) => {
  * @returns {Promise<boolean>} True if valid token available, false otherwise
  */
 export const ensureValidToken = async () => {
-    // Check for existing token in database
-    const existingToken = getActiveToken(PLATFORM_FACEBOOK);
+    // Use ACCESS_TOKEN from config (loaded from .env)
+    const existingToken = ACCESS_TOKEN;
 
-    if (existingToken) {
-        console.log(S.FgCyan + '🔍 Validating stored access token...' + S.Reset);
-
-        try {
-            const validation = await validateTokenWithAPI(existingToken);
-
-            if (validation.valid) {
-                const permissions = await getTokenPermissions(existingToken);
-                const permCheck = checkRequiredPermissions(permissions);
-
-                console.log(S.FgGreen + '✅ Access token validated' + S.Reset);
-                console.log(S.FgGreen + `✅ Permissions: ${permissions.slice(0, 3).join(', ')}${permissions.length > 3 ? `, +${permissions.length - 3} more` : ''}` + S.Reset);
-
-                if (!permCheck.hasRecommended) {
-                    console.log(S.FgYellow + '⚠️  Note: user_videos permission not found (video downloads may fail)' + S.Reset);
-                }
-
-                return true;
-            }
-
-            // Token is invalid - prompt for new one
-            console.log(S.BgRed + '\n❌ Stored token is invalid or expired' + S.Reset);
-            console.log(S.FgRed + `Error: ${validation.error}\n` + S.Reset);
-
-            console.log('What would you like to do?');
-            console.log('  1. Enter a new access token');
-            console.log('  2. Exit program\n');
-
-            const choice = await prompt('> Choice (1 or 2): ');
-
-            if (choice.trim() === '1') {
-                while (true) {
-                    const newToken = await promptForToken();
-                    if (!newToken) {
-                        console.log(S.FgRed + 'No token entered.' + S.Reset);
-                        continue;
-                    }
-
-                    const success = await validateAndSaveToken(newToken);
-                    if (success) {
-                        return true;
-                    }
-
-                    const retry = await prompt('\n> Try again? (y/n): ');
-                    if (retry.trim().toLowerCase() !== 'y') {
-                        return false;
-                    }
-                }
-            }
-
-            return false;
-        } catch (error) {
-            console.log(S.BgRed + '\n❌ Error validating token: ' + error.message + S.Reset);
-            console.log(S.FgYellow + 'Proceeding anyway (validation will happen on first API call)\n' + S.Reset);
-            return true; // Allow proceeding on network errors
-        }
+    if (!existingToken || existingToken.trim() === '') {
+        console.log(S.BgYellow + '\n⚠️  No access token found in .env file!' + S.Reset);
+        console.log('Please add FB_ACCESS_TOKEN to your .env file.');
+        console.log('Get a token from: ' + S.FgCyan + 'https://developers.facebook.com/tools/explorer/' + S.Reset);
+        return false;
     }
 
-    // No token in database - first run
-    console.log(S.BgYellow + '\n⚠️  No access token found!' + S.Reset);
+    console.log(S.FgCyan + '🔍 Validating access token...' + S.Reset);
 
-    while (true) {
-        const token = await promptForToken();
-        if (!token) {
-            console.log(S.FgRed + '\nNo token entered. Cannot proceed without a token.' + S.Reset);
-            const exit = await prompt('> Exit program? (y/n): ');
-            if (exit.trim().toLowerCase() === 'y') {
-                return false;
-            }
-            continue;
-        }
+    try {
+        const validation = await validateTokenWithAPI(existingToken);
 
-        const success = await validateAndSaveToken(token);
-        if (success) {
+        if (validation.valid) {
+            const permissions = await getTokenPermissions(existingToken);
+
+            // Display comprehensive token status
+            displayTokenStatus(existingToken, validation, permissions);
+
             return true;
         }
 
-        // Ask if want to try again
-        const retry = await prompt('\n> Try again? (y/n): ');
-        if (retry.trim().toLowerCase() !== 'y') {
-            return false;
-        }
+        // Token is invalid
+        console.log(S.BgRed + '\n❌ Access token is invalid or expired' + S.Reset);
+        console.log(S.FgRed + `Error: ${validation.error}` + S.Reset);
+        console.log('\nPlease update FB_ACCESS_TOKEN in your .env file with a valid token.');
+        return false;
+
+    } catch (error) {
+        console.log(S.FgYellow + '⚠️  Could not validate token: ' + error.message + S.Reset);
+        console.log('Proceeding anyway - validation will occur on first API call.');
+        return true; // Allow proceeding on network errors
     }
 };
 

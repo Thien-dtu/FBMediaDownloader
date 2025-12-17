@@ -6,7 +6,6 @@ import {
   PHOTO_FILE_FORMAT,
   VIDEO_FILE_FORMAT,
   WAIT_BEFORE_NEXT_FETCH,
-  WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO,
   DATABASE_ENABLED,
   PLATFORM_FACEBOOK,
   getSaveFolderPath,
@@ -22,7 +21,10 @@ import {
 } from "./utils.js";
 import { t } from "./lang.js";
 import { log } from "./logger.js";
-import { getOrCreateUser, getMediaStatus, saveMedia, updateMediaToHD } from "./database.js";
+import { getOrCreateUser } from "./database.js";
+import { checkMediaSkip, attemptHDFetch, saveMediaWithTracking, logDownloadSummary } from "./download_helpers.js";
+import { runBatchDownload } from "./batch_utils.js";
+import { isCancelled } from "./cancellation.js";
 
 // Lấy ra các thông tin cần thiết (id, ảnh, video) từ dữ liệu attachment.
 const getMediaFromAttachment = (attachment) => {
@@ -135,6 +137,12 @@ const fetchWallMedia = async ({
   let url = `${FB_API_HOST}/${targetId}/feed?fields=attachments{media,type,subattachments,target}&access_token=${ACCESS_TOKEN}`;
 
   while (url && page <= pageLimit) {
+    // Check for cancellation before each page fetch
+    if (isCancelled()) {
+      log(S.FgYellow + `⏸️  Stopping at page ${page - 1} (cancelled)` + S.Reset);
+      break;
+    }
+
     log(t("downloadingPage").replace("{page}", page));
     const fetchData = await myFetch(url);
     page++;
@@ -238,47 +246,37 @@ export const downloadWallMedia = async ({
         const savePath = `${dir}/${media_id}.${file_format}`;
 
         // Smart skip: check DB status for HD upgrade capability
-        if (DATABASE_ENABLED && userId) {
-          const mediaStatus = getMediaStatus(userId, media_id);
+        const skipCheck = checkMediaSkip(userId, media_id, isGetLargestPhoto && media_type === MEDIA_TYPE.PHOTO);
 
-          if (mediaStatus?.exists) {
-            // Check if we need HD upgrade for photos
-            if (media_type === MEDIA_TYPE.PHOTO && isGetLargestPhoto && !mediaStatus.isHd) {
-              log(`🔄 UPGRADE ${media_id} to HD (was SD)`);
-              // Fall through to re-download in HD
-            } else {
-              // Already downloaded (and HD if requested, or video)
-              if (media_type === MEDIA_TYPE.PHOTO) {
-                log(`⏭️  SKIPPING photo ${media_id} (already downloaded${mediaStatus.isHd ? ', HD' : ''})`);
-                skippedPhotos++;
-              } else {
-                log(`⏭️  SKIPPING video ${media_id} (already downloaded)`);
-                skippedVideos++;
-              }
-              continue;
-            }
+        if (skipCheck.skip) {
+          if (media_type === MEDIA_TYPE.PHOTO) {
+            log(`⏭️  SKIPPING photo ${media_id} (${skipCheck.reason})`);
+            skippedPhotos++;
+          } else {
+            log(`⏭️  SKIPPING video ${media_id} (${skipCheck.reason})`);
+            skippedVideos++;
           }
+          continue;
+        }
+
+        if (skipCheck.needsUpgrade) {
+          log(`🔄 UPGRADE ${media_id} to HD (was SD)`);
         }
 
         // For photos, optionally fetch HD version
         let isHdDownload = false;
-        let isUpgradeAttempt = false;
         if (isGetLargestPhoto && media_type == MEDIA_TYPE.PHOTO) {
-          // Check if this is an upgrade (media already exists in SD)
-          const existingStatus = DATABASE_ENABLED && userId ? getMediaStatus(userId, media_id) : null;
-          isUpgradeAttempt = existingStatus?.exists && !existingStatus?.isHd;
+          const hdResult = await attemptHDFetch(media_id, userId, skipCheck.needsUpgrade);
 
-          await sleep(WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO);
-          log(t("fetchingHDPhoto").replace("{media_id}", media_id));
-          const hdUrl = await getLargestPhotoLink(media_id);
-          if (hdUrl) {
-            media_url = hdUrl;
-            isHdDownload = true;
-          } else if (isUpgradeAttempt) {
-            // HD fetch failed during upgrade - skip, we already have SD
+          if (hdResult.shouldSkip) {
             log(`⏭️  SKIPPING ${media_id} (HD fetch failed, keeping SD version)`);
             skippedPhotos++;
             continue;
+          }
+
+          if (hdResult.url) {
+            media_url = hdResult.url;
+            isHdDownload = true;
           }
         }
 
@@ -300,20 +298,7 @@ export const downloadWallMedia = async ({
           await download(media_url, savePath);
 
           // Mark as downloaded in database with HD status
-          if (DATABASE_ENABLED && userId) {
-            // Check if this was an upgrade
-            const existingStatus = getMediaStatus(userId, media_id);
-            if (existingStatus?.exists) {
-              // Only update to HD if HD fetch actually succeeded
-              if (isHdDownload) {
-                updateMediaToHD(userId, media_id, savePath);
-              }
-              // If HD fetch failed, leave the record as-is (still SD)
-            } else {
-              // New media
-              saveMedia(userId, media_id, mediaIsHd, savePath);
-            }
-          }
+          saveMediaWithTracking(userId, media_id, mediaIsHd, savePath, skipCheck.needsUpgrade);
 
           if (media_type === MEDIA_TYPE.PHOTO) {
             savedPhotos++;
@@ -331,7 +316,7 @@ export const downloadWallMedia = async ({
   });
 
   // Log summary
-  log(`\n📊 Summary: ${savedPhotos} photos, ${savedVideos} videos saved | ${skippedPhotos} photos, ${skippedVideos} videos skipped (duplicates)`);
+  logDownloadSummary({ savedPhotos, savedVideos, skippedPhotos, skippedVideos });
 
   return {
     saved: savedPhotos + savedVideos,
@@ -345,79 +330,8 @@ export const downloadWallMedia = async ({
 
 // ========== BATCH DOWNLOAD SUPPORT ==========
 export const downloadWallMediaBatch = async (userIds, options) => {
-  const results = [];
-  const totalUsers = userIds.length;
-  const startTime = Date.now();
-
-  console.log(`\n📦 Processing ${totalUsers} user(s)...\n`);
-
-  for (let i = 0; i < totalUsers; i++) {
-    const userId = userIds[i];
-    console.log(`[${i + 1}/${totalUsers}] Downloading wall media from user ${userId}...`);
-
-    try {
-      const result = await downloadWallMedia({
-        targetId: userId,
-        ...options
-      });
-
-      results.push({
-        userId,
-        success: true,
-        ...result
-      });
-
-      console.log(`✅ User ${userId}: ${result.savedPhotos} photos, ${result.savedVideos} videos saved | ${result.skippedPhotos}+${result.skippedVideos} skipped`);
-
-    } catch (error) {
-      results.push({
-        userId,
-        success: false,
-        error: error.message
-      });
-
-      console.log(`❌ User ${userId}: ${error.message}`);
-    }
-
-    // Small delay between users to avoid rate limiting
-    if (i < totalUsers - 1) {
-      await sleep(1000);
-    }
-  }
-
-  // Print summary
-  printBatchSummary(results, startTime);
-
-  return results;
-};
-
-const printBatchSummary = (results, startTime) => {
-  const successful = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
-  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-
-  console.log('\n' + '='.repeat(50));
-  console.log('BATCH SUMMARY'.padStart(32));
-  console.log('='.repeat(50));
-  console.log(`Total Users: ${results.length}`);
-  console.log(`Successful: ${successful.length}`);
-  console.log(`Failed: ${failed.length}`);
-
-  if (successful.length > 0) {
-    const totalPhotos = successful.reduce((sum, r) => sum + (r.savedPhotos || 0), 0);
-    const totalVideos = successful.reduce((sum, r) => sum + (r.savedVideos || 0), 0);
-    const totalSkipped = successful.reduce((sum, r) => sum + (r.skipped || 0), 0);
-    console.log(`Total Media Downloaded: ${totalPhotos} photos, ${totalVideos} videos`);
-    console.log(`Total Skipped (duplicates): ${totalSkipped}`);
-  }
-
-  if (failed.length > 0) {
-    console.log('\nFailed Users:');
-    failed.forEach(r => {
-      console.log(`  - ${r.userId}: ${r.error}`);
-    });
-  }
-
-  console.log(`Time Elapsed: ${duration}s`);
-  console.log('='.repeat(50) + '\n');
+  return runBatchDownload(userIds, downloadWallMedia, options, {
+    mediaType: 'wall media',
+    showPhotoVideoSplit: true
+  });
 };

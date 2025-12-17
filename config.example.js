@@ -1,17 +1,27 @@
-// Copy this file to config.js and fill in your values
-// DO NOT commit config.js to version control!
+// Configuration management using dotenv
+// Copy .env.example to .env and fill in your values
+// DO NOT commit .env to version control!
+
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // ========== ACCESS TOKEN ==========
 // Get your Facebook access token from: https://developers.facebook.com/tools/explorer/
-export const ACCESS_TOKEN = "YOUR_FACEBOOK_ACCESS_TOKEN_HERE";
-export const WAIT_BEFORE_NEXT_FETCH = 500; // wait time (ms) before each fetch
-export const WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO = 500; // wait time (ms) before fetching high-res photo (lower = higher ban risk)
+export const ACCESS_TOKEN = process.env.FB_ACCESS_TOKEN || "";
+
+// ========== TIMING CONFIGURATION ==========
+export const WAIT_BEFORE_NEXT_FETCH = parseInt(process.env.WAIT_BEFORE_NEXT_FETCH) || 500;
+export const WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO = parseInt(process.env.WAIT_BEFORE_NEXT_FETCH_LARGEST_PHOTO) || 500;
+
+// ========== MISC ==========
 export const ID_LINK_SEPERATOR = ";";
 export const FOLDER_TO_SAVE_LINKS = "./links";  // Folder to save txt files with links
 
 // ========== DATABASE CONFIGURATION ==========
-export const DATABASE_ENABLED = true;
-export const DATABASE_PATH = './downloader.db';
+export const DATABASE_ENABLED = process.env.DATABASE_ENABLED !== 'false';
+export const DATABASE_PATH = process.env.DATABASE_PATH || './downloader.db';
 
 // ========== PLATFORM IDS ==========
 export const PLATFORM_FACEBOOK = 1;
@@ -19,7 +29,7 @@ export const PLATFORM_INSTAGRAM = 2;
 
 // ========== UNIFIED FOLDER STRUCTURE ==========
 // All downloads now go to: downloads/{userId}/photos/ or downloads/{userId}/videos/
-export const DOWNLOADS_FOLDER = './downloads';
+export const DOWNLOADS_FOLDER = process.env.DOWNLOADS_FOLDER || './downloads';
 
 /**
  * Get save folder path for a user's media
@@ -31,5 +41,6 @@ export function getSaveFolderPath(userId, mediaType) {
     return `${DOWNLOADS_FOLDER}/${userId}/${mediaType}`;
 }
 
-export const PHOTO_FILE_FORMAT = "png"; // OR jpg
-export const VIDEO_FILE_FORMAT = "mp4"; // OR wav ?
+// ========== FILE FORMATS ==========
+export const PHOTO_FILE_FORMAT = process.env.PHOTO_FILE_FORMAT || "png";
+export const VIDEO_FILE_FORMAT = process.env.VIDEO_FILE_FORMAT || "mp4";

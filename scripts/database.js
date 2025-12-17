@@ -25,25 +25,28 @@ export const initDatabase = () => {
         const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='platforms'").get();
 
         if (!tables) {
-            // Database is new, run schema
+            // Database is new, run schema (already includes HD tracking columns)
             log('📊 Initializing database schema...');
-            const schema = fs.readFileSync('./schema-v2.sql', 'utf8');
+            const schema = fs.readFileSync('./schema.sql', 'utf8');
             db.exec(schema);
             log('✅ Database schema created successfully');
         } else {
-            // Check if migration is needed (v3: HD tracking)
+            // Check if old database needs HD columns added (backward compatibility)
             const hasIsHdColumn = db.prepare(
                 "SELECT 1 FROM pragma_table_info('saved_media') WHERE name='is_hd'"
             ).get();
 
             if (!hasIsHdColumn) {
-                log('📊 Running migration v3 (HD tracking)...');
+                log('📊 Adding HD tracking columns to existing database...');
                 try {
-                    const migration = fs.readFileSync('./migration-v3.sql', 'utf8');
-                    db.exec(migration);
-                    log('✅ Migration v3 completed successfully');
+                    db.exec(`
+                        ALTER TABLE saved_media ADD COLUMN is_hd BOOLEAN DEFAULT 0;
+                        ALTER TABLE saved_media ADD COLUMN file_path TEXT;
+                        CREATE INDEX IF NOT EXISTS idx_saved_media_hd_status ON saved_media(user_id, is_hd);
+                    `);
+                    log('✅ HD tracking columns added successfully');
                 } catch (migrationError) {
-                    log(`⚠️ Migration v3 error: ${migrationError.message}`);
+                    log(`⚠️ Migration error: ${migrationError.message}`);
                 }
             }
         }
@@ -83,6 +86,58 @@ export const getOrCreateUser = (platformId, uid) => {
     } catch (error) {
         log(`⚠️ Error getting/creating user: ${error.message}`);
         return null;
+    }
+};
+
+/**
+ * Get user ID by UID (without creating)
+ * @param {string} uid - User's UID
+ * @param {number} platformId - Platform ID (default: 1 for Facebook)
+ * @returns {number|null} User ID or null if not found
+ */
+export const getUserIdByUID = (uid, platformId = 1) => {
+    if (!db || !DATABASE_ENABLED) return null;
+
+    try {
+        const result = db.prepare(
+            'SELECT id FROM users WHERE platform_id = ? AND uid = ?'
+        ).get(platformId, uid);
+        return result?.id || null;
+    } catch (error) {
+        log(`⚠️ Error getting user by UID: ${error.message}`);
+        return null;
+    }
+};
+
+/**
+ * Check if a UID has a username stored
+ * @param {string} uid - User's UID
+ * @param {number} platformId - Platform ID (default: 1 for Facebook)
+ * @returns {object} {hasUsername: boolean, username: string|null, userId: number|null}
+ */
+export const hasUsername = (uid, platformId = 1) => {
+    if (!db || !DATABASE_ENABLED) return { hasUsername: false, username: null, userId: null };
+
+    try {
+        const result = db.prepare(`
+            SELECT u.id as userId, uh.username
+            FROM users u
+            LEFT JOIN username_history uh ON u.id = uh.user_id AND uh.is_current = 1
+            WHERE u.platform_id = ? AND u.uid = ?
+        `).get(platformId, uid);
+
+        if (!result) {
+            return { hasUsername: false, username: null, userId: null };
+        }
+
+        return {
+            hasUsername: !!result.username,
+            username: result.username || null,
+            userId: result.userId
+        };
+    } catch (error) {
+        log(`⚠️ Error checking username: ${error.message}`);
+        return { hasUsername: false, username: null, userId: null };
     }
 };
 
@@ -376,6 +431,22 @@ export const getSavedMediaIds = (userId) => {
     } catch (error) {
         log(`⚠️ Error getting saved media IDs: ${error.message}`);
         return new Set();
+    }
+};
+
+/**
+ * Get all UIDs from the database
+ * @returns {Array<string>} Array of all UIDs
+ */
+export const getAllUIDs = () => {
+    if (!db || !DATABASE_ENABLED) return [];
+
+    try {
+        const results = db.prepare('SELECT uid FROM users ORDER BY uid').all();
+        return results.map(r => r.uid);
+    } catch (error) {
+        log(`⚠️ Error getting all UIDs: ${error.message}`);
+        return [];
     }
 };
 

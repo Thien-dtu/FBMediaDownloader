@@ -1,20 +1,31 @@
 import { menu } from "./scripts/menu.js";
 import { initDatabase } from "./scripts/database.js";
 import { DATABASE_ENABLED } from "./config.js";
+import { ensureValidToken } from "./scripts/token_validator.js";
 
-// Initialize database if enabled
-if (DATABASE_ENABLED) {
-    try {
-        initDatabase();
-        console.log("✅ Database initialized - Duplicate detection enabled");
-    } catch (e) {
-        console.log("⚠️  Database initialization failed, continuing without tracking");
-        console.log("   Error:", e.message);
+// Main startup function
+(async () => {
+    // Initialize database if enabled
+    if (DATABASE_ENABLED) {
+        try {
+            initDatabase();
+            console.log("✅ Database initialized - Duplicate detection enabled");
+        } catch (e) {
+            console.log("⚠️  Database initialization failed, continuing without tracking");
+            console.log("   Error:", e.message);
+        }
     }
-}
 
-// Launch main menu
-menu();
+    // Validate token and display status
+    const tokenValid = await ensureValidToken();
+    if (!tokenValid) {
+        console.log("Exiting due to invalid token.");
+        process.exit(1);
+    }
+
+    // Launch main menu
+    menu();
+})();
 
 // Danh sách timeline album đẹp
 // ColourfulSpace: https://www.facebook.com/media/set/?vanity=ColourfulSpace&set=a.945632905514659

@@ -53,3 +53,7 @@ build/
 # ========== Test Coverage ==========
 coverage/
 .nyc_output/
+
+# ========== Temporary Download Files ==========
+*.tmp
+proxies.txt

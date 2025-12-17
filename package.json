@@ -12,6 +12,10 @@
   "license": "ISC",
   "dependencies": {
     "better-sqlite3": "^12.5.0",
-    "node-fetch": "^3.0.0"
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^3.0.0",
+    "socks-proxy-agent": "^8.0.5"
   }
 }

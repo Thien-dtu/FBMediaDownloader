@@ -1,0 +1,12 @@
+# Proxy List for FB Media Downloader
+# One proxy per line, format: ip:port or http://ip:port
+# Lines starting with # are comments
+#
+# Example proxies from free proxy lists:
+# 222.234.52.105:80
+# 82.165.202.246:80
+# 203.95.196.116:8080
+#
+# To use this file, set in .env:
+# PROXY_ENABLED=true
+# PROXY_LIST_FILE=proxies.txt
