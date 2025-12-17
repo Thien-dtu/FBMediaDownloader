@@ -18,6 +18,7 @@ import { LANGKEY, setLang, t } from "./lang.js";
 import { log } from "./logger.js";
 import { getAllUIDs, initDatabase } from "./database.js";
 import { ensureUsername, scanAllUIDs } from "./user_info.js";
+import { ensureUserProfile, ensureUserProfileForUIDs } from "./user_profile.js";
 import { checkAllProxies, reorderByLatency, isProxyEnabled, getProxyStats, toggleProxy } from "./proxy_manager.js";
 import { runCancellable } from "./cancellation.js";
 
@@ -55,15 +56,8 @@ const choose = async (title, menu_items) => {
   }
 };
 
-/**
- * Ensure usernames are fetched for all given UIDs before proceeding
- * @param {string[]} uids - Array of UIDs
- */
-const ensureUsernamesForUIDs = async (uids) => {
-  for (const uid of uids) {
-    await ensureUsername(uid);
-  }
-};
+// Note: ensureUsernamesForUIDs has been replaced by ensureUserProfileForUIDs
+// from user_profile.js, which fetches full profile information instead of just usernames
 
 // ========================================== MENU =========================================
 const menuDownloadAlbum = async () => {
@@ -129,9 +123,6 @@ const menuDownloadWallMedia = async () => {
           continue;
         }
 
-        // Auto-fetch usernames for all target IDs
-        await ensureUsernamesForUIDs(target_ids);
-
         const page_limit = await prompt(t("howManyPageWall"));
         if (page_limit >= 0) {
           const include_video = await prompt(t("downloadVideoWall"));
@@ -150,6 +141,9 @@ const menuDownloadWallMedia = async () => {
 
           // Wrap download in cancellable operation
           await runCancellable(async () => {
+            // Fetch user profiles before starting download
+            await ensureUserProfileForUIDs(target_ids);
+
             if (action.key == 1) {
               // Download media (not links)
               if (target_ids.length > 1) {
@@ -196,9 +190,6 @@ const menuDownloadPhotoVideoOfUser = async () => {
           continue;
         }
 
-        // Auto-fetch usernames for all target IDs
-        await ensureUsernamesForUIDs(target_ids);
-
         const from_cursor = await prompt(t("startPageUser"));
         const page_limit = await prompt(t("howManyPageUser"));
 
@@ -210,6 +201,9 @@ const menuDownloadPhotoVideoOfUser = async () => {
 
           // Wrap download in cancellable operation
           await runCancellable(async () => {
+            // Fetch user profiles before starting download
+            await ensureUserProfileForUIDs(target_ids);
+
             // Use batch download for multiple users
             if (target_ids.length > 1) {
               if (action.key == 1) {
@@ -313,8 +307,8 @@ export const menu = async () => {
     if (action.key == 2) {
       const page_id = await prompt(t("enterPageID"));
       if (page_id != -1) {
-        // Auto-fetch username for the page ID
-        await ensureUsername(page_id);
+        // Auto-fetch user profile for the page ID
+        await ensureUserProfile(page_id);
 
         const timeline_album_id = await fetchTimeLineAlbumId_FBPage(page_id);
         if (timeline_album_id) {

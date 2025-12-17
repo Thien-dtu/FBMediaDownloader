@@ -1,39 +1,15 @@
 /**
- * Test Script: Fetch and save user profile information from Facebook API
+ * User Profile Module
  * 
- * Supports multiple UIDs (comma-separated).
- * Fetches fields individually for better resilience - if one fails, others still work.
- * Uses normalized database structure (fb_pages + user_page_likes).
- * 
- * Usage: 
- *   node scripts/test_user_profile.js <uid>
- *   node scripts/test_user_profile.js <uid1>,<uid2>,<uid3>
+ * Fetch and save user profile information from Facebook API.
+ * Extracted from test_user_profile.js for integration into main program flow.
  */
 
 import fetch from 'node-fetch';
-import Database from 'better-sqlite3';
-import { ACCESS_TOKEN, DATABASE_PATH, DATABASE_ENABLED } from '../config.js';
+import { ACCESS_TOKEN, DATABASE_ENABLED, PLATFORM_FACEBOOK } from '../config.js';
 import { FB_API_HOST } from './constants.js';
-
-// Check arguments
-const uidArg = process.argv[2];
-if (!uidArg) {
-    console.log('Usage: node scripts/test_user_profile.js <uid>');
-    console.log('       node scripts/test_user_profile.js <uid1>,<uid2>,<uid3>');
-    console.log('Example: node scripts/test_user_profile.js 100003731573138');
-    process.exit(1);
-}
-
-if (!DATABASE_ENABLED) {
-    console.log('Database is disabled. Enable it in config to run this test.');
-    process.exit(1);
-}
-
-const db = new Database(DATABASE_PATH);
-db.pragma('journal_mode = WAL');
-
-// Parse UIDs (comma-separated)
-const uids = uidArg.split(',').map(u => u.trim()).filter(u => u);
+import { log } from './logger.js';
+import { getOrCreateUser, getDatabase } from './database.js';
 
 // Profile fields to fetch individually for resilience
 const PROFILE_FIELD_GROUPS = [
@@ -68,7 +44,6 @@ async function fetchFieldGroup(uid, fields) {
         const data = await response.json();
 
         if (data.error) {
-            // Silently skip errors for individual fields
             return {};
         }
 
@@ -83,8 +58,8 @@ async function fetchFieldGroup(uid, fields) {
  * @param {string} uid - User ID
  * @returns {Promise<object|null>} Complete profile or null on total failure
  */
-async function fetchUserProfile(uid) {
-    console.log(`\n🔍 Fetching profile for UID: ${uid}`);
+export async function fetchUserProfile(uid) {
+    log(`🔍 Fetching profile for UID: ${uid}`);
 
     let profile = {};
     let hasAnyData = false;
@@ -100,7 +75,7 @@ async function fetchUserProfile(uid) {
     }
 
     if (!hasAnyData || !profile.id) {
-        console.error(`❌ Could not fetch any data for UID: ${uid}`);
+        log(`❌ Could not fetch any data for UID: ${uid}`);
         return null;
     }
 
@@ -112,12 +87,12 @@ async function fetchUserProfile(uid) {
  * @param {string} uid - User ID
  * @returns {Promise<Array>} Array of all liked pages
  */
-async function fetchAllLikes(uid) {
+export async function fetchAllLikes(uid) {
     const allLikes = [];
     let url = `${FB_API_HOST}/${uid}/likes?fields=id,name,created_time&limit=100&access_token=${ACCESS_TOKEN}`;
     let page = 1;
 
-    console.log('📋 Fetching liked pages...');
+    log('📋 Fetching liked pages...');
 
     while (url) {
         try {
@@ -125,7 +100,7 @@ async function fetchAllLikes(uid) {
             const data = await response.json();
 
             if (data.error) {
-                console.log(`   ⚠️ Likes error: ${data.error.message}`);
+                log(`   ⚠️ Likes error: ${data.error.message}`);
                 break;
             }
 
@@ -142,34 +117,22 @@ async function fetchAllLikes(uid) {
             }
 
         } catch (error) {
-            console.log(`   ⚠️ Error: ${error.message}`);
+            log(`   ⚠️ Error: ${error.message}`);
             break;
         }
     }
 
-    console.log(`\n   ✅ Total: ${allLikes.length} likes`);
-    return allLikes;
-}
-
-/**
- * Get or create user in database
- */
-function getOrCreateUser(uid) {
-    const platformId = 1;
-    let user = db.prepare('SELECT id FROM users WHERE platform_id = ? AND uid = ?').get(platformId, uid);
-
-    if (!user) {
-        const result = db.prepare('INSERT INTO users (platform_id, uid) VALUES (?, ?)').run(platformId, uid);
-        return result.lastInsertRowid;
+    if (allLikes.length > 0) {
+        console.log(); // New line after progress
     }
-
-    return user.id;
+    log(`   ✅ Total: ${allLikes.length} likes`);
+    return allLikes;
 }
 
 /**
  * Get or create entity in fb_entities table
  */
-function getOrCreateEntity(fbId, name, entityType) {
+function getOrCreateEntity(db, fbId, name, entityType) {
     if (!fbId) return null;
 
     let entity = db.prepare('SELECT id FROM fb_entities WHERE fb_id = ?').get(fbId);
@@ -179,19 +142,32 @@ function getOrCreateEntity(fbId, name, entityType) {
         ).run(fbId, name, entityType);
         return result.lastInsertRowid;
     } else {
-        // Update name if changed
         db.prepare('UPDATE fb_entities SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE fb_id = ?').run(name, fbId);
         return entity.id;
     }
 }
 
 /**
+ * Get or create page in fb_pages table (for likes)
+ */
+function getOrCreatePage(db, pageId, pageName) {
+    let page = db.prepare('SELECT id FROM fb_pages WHERE page_id = ?').get(pageId);
+
+    if (!page) {
+        const result = db.prepare('INSERT INTO fb_pages (page_id, page_name) VALUES (?, ?)').run(pageId, pageName);
+        return result.lastInsertRowid;
+    } else {
+        db.prepare('UPDATE fb_pages SET page_name = ?, updated_at = CURRENT_TIMESTAMP WHERE page_id = ?').run(pageName, pageId);
+        return page.id;
+    }
+}
+
+/**
  * Save profile to database (using normalized structure)
  */
-function saveProfile(userId, profile) {
-    // Get or create hometown and location entities
-    const hometownId = profile.hometown ? getOrCreateEntity(profile.hometown.id, profile.hometown.name, 'location') : null;
-    const locationId = profile.location ? getOrCreateEntity(profile.location.id, profile.location.name, 'location') : null;
+function saveProfile(db, userId, profile) {
+    const hometownId = profile.hometown ? getOrCreateEntity(db, profile.hometown.id, profile.hometown.name, 'location') : null;
+    const locationId = profile.location ? getOrCreateEntity(db, profile.location.id, profile.location.name, 'location') : null;
     const significantOtherUid = profile.significant_other?.id || null;
 
     const sql = `
@@ -258,7 +234,7 @@ function saveProfile(userId, profile) {
         );
         return true;
     } catch (error) {
-        console.error(`   ❌ Save error: ${error.message}`);
+        log(`   ❌ Save error: ${error.message}`);
         return false;
     }
 }
@@ -266,7 +242,7 @@ function saveProfile(userId, profile) {
 /**
  * Save work history using normalized structure
  */
-function saveWorkHistory(userId, workArray) {
+function saveWorkHistory(db, userId, workArray) {
     if (!workArray || workArray.length === 0) return 0;
 
     const insertWork = db.prepare(`
@@ -283,9 +259,9 @@ function saveWorkHistory(userId, workArray) {
 
     let saved = 0;
     for (const work of workArray) {
-        const employerId = work.employer ? getOrCreateEntity(work.employer.id, work.employer.name, 'employer') : null;
-        const positionId = work.position ? getOrCreateEntity(work.position.id, work.position.name, 'position') : null;
-        const locationId = work.location ? getOrCreateEntity(work.location.id, work.location.name, 'location') : null;
+        const employerId = work.employer ? getOrCreateEntity(db, work.employer.id, work.employer.name, 'employer') : null;
+        const positionId = work.position ? getOrCreateEntity(db, work.position.id, work.position.name, 'position') : null;
+        const locationId = work.location ? getOrCreateEntity(db, work.location.id, work.location.name, 'location') : null;
 
         try {
             insertWork.run(
@@ -308,7 +284,7 @@ function saveWorkHistory(userId, workArray) {
 /**
  * Save education history using normalized structure
  */
-function saveEducationHistory(userId, educationArray) {
+function saveEducationHistory(db, userId, educationArray) {
     if (!educationArray || educationArray.length === 0) return 0;
 
     const insertEdu = db.prepare(`
@@ -324,10 +300,10 @@ function saveEducationHistory(userId, educationArray) {
 
     let saved = 0;
     for (const edu of educationArray) {
-        const schoolId = edu.school ? getOrCreateEntity(edu.school.id, edu.school.name, 'school') : null;
+        const schoolId = edu.school ? getOrCreateEntity(db, edu.school.id, edu.school.name, 'school') : null;
         let concentrationId = null;
         if (edu.concentration && edu.concentration.length > 0) {
-            concentrationId = getOrCreateEntity(edu.concentration[0].id, edu.concentration[0].name, 'concentration');
+            concentrationId = getOrCreateEntity(db, edu.concentration[0].id, edu.concentration[0].name, 'concentration');
         }
 
         try {
@@ -348,24 +324,9 @@ function saveEducationHistory(userId, educationArray) {
 }
 
 /**
- * Get or create page in fb_pages table (for likes)
- */
-function getOrCreatePage(pageId, pageName) {
-    let page = db.prepare('SELECT id FROM fb_pages WHERE page_id = ?').get(pageId);
-
-    if (!page) {
-        const result = db.prepare('INSERT INTO fb_pages (page_id, page_name) VALUES (?, ?)').run(pageId, pageName);
-        return result.lastInsertRowid;
-    } else {
-        db.prepare('UPDATE fb_pages SET page_name = ?, updated_at = CURRENT_TIMESTAMP WHERE page_id = ?').run(pageName, pageId);
-        return page.id;
-    }
-}
-
-/**
  * Save likes using normalized structure
  */
-function saveLikes(userId, likes) {
+function saveLikes(db, userId, likes) {
     if (!likes || likes.length === 0) {
         return { saved: 0, skipped: 0 };
     }
@@ -382,7 +343,7 @@ function saveLikes(userId, likes) {
 
     for (const like of likes) {
         try {
-            const fbPageId = getOrCreatePage(like.id, like.name);
+            const fbPageId = getOrCreatePage(db, like.id, like.name);
             insertLike.run(userId, fbPageId, like.created_time || null);
             saved++;
         } catch (error) {
@@ -396,7 +357,7 @@ function saveLikes(userId, likes) {
 /**
  * Update username history
  */
-function updateUsername(userId, name, link) {
+function updateUsername(db, userId, name, link) {
     const existing = db.prepare('SELECT * FROM username_history WHERE user_id = ? AND is_current = 1').get(userId);
 
     if (!existing || existing.username !== name) {
@@ -408,121 +369,120 @@ function updateUsername(userId, name, link) {
 }
 
 /**
- * Display profile summary
+ * Check if user profile exists in database
+ * @param {number} userId - User ID
+ * @returns {boolean} True if profile exists
  */
-function displayProfileSummary(profile) {
-    console.log(`   📛 ${profile.name || 'Unknown'} (${profile.gender || 'N/A'})`);
-    if (profile.location?.name) console.log(`   📍 ${profile.location.name}`);
-    if (profile.work?.length) console.log(`   💼 ${profile.work[0].employer?.name || 'Unknown'}`);
-    if (profile.education?.length) console.log(`   🎓 ${profile.education[0].school?.name || 'Unknown'}`);
+export function hasUserProfile(userId) {
+    const db = getDatabase();
+    if (!db || !DATABASE_ENABLED) return false;
+
+    try {
+        const result = db.prepare('SELECT 1 FROM user_profiles WHERE user_id = ? LIMIT 1').get(userId);
+        return !!result;
+    } catch (error) {
+        log(`⚠️ Error checking user profile: ${error.message}`);
+        return false;
+    }
 }
 
 /**
- * Process a single UID
+ * Fetch and save complete user profile
+ * @param {string} uid - User ID
+ * @param {number} userId - Database user ID
+ * @returns {Promise<object>} Result with success status
  */
-async function processUID(uid) {
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`  Processing UID: ${uid}`);
-    console.log('═'.repeat(60));
+async function fetchAndSaveProfile(uid, userId) {
+    const db = getDatabase();
+    if (!db) {
+        return { success: false, error: 'Database not available' };
+    }
 
-    // Fetch profile
+    // Fetch profile from API
     const profile = await fetchUserProfile(uid);
-
     if (!profile) {
-        console.log(`   ⏭️ Skipping UID: ${uid} (no data)`);
-        return { success: false, uid };
+        return { success: false, error: 'Could not fetch profile from API' };
     }
 
-    // Display summary
-    displayProfileSummary(profile);
-
-    // Save to database
-    const userId = getOrCreateUser(uid);
-    const saved = saveProfile(userId, profile);
-
+    // Save profile
+    const saved = saveProfile(db, userId, profile);
     if (!saved) {
-        return { success: false, uid };
+        return { success: false, error: 'Could not save profile to database' };
     }
 
-    console.log(`   ✅ Profile saved (user_id: ${userId})`);
+    log(`   ✅ Profile saved for ${profile.name || uid}`);
 
-    // Save work history (normalized)
+    // Save work history
     if (profile.work && profile.work.length > 0) {
-        const workSaved = saveWorkHistory(userId, profile.work);
-        console.log(`   ✅ Work history: ${workSaved} records`);
+        const workSaved = saveWorkHistory(db, userId, profile.work);
+        log(`   ✅ Work history: ${workSaved} records`);
     }
 
-    // Save education history (normalized)
+    // Save education history
     if (profile.education && profile.education.length > 0) {
-        const eduSaved = saveEducationHistory(userId, profile.education);
-        console.log(`   ✅ Education: ${eduSaved} records`);
+        const eduSaved = saveEducationHistory(db, userId, profile.education);
+        log(`   ✅ Education: ${eduSaved} records`);
     }
 
     // Update username
     if (profile.name) {
-        updateUsername(userId, profile.name, profile.link);
+        updateUsername(db, userId, profile.name, profile.link);
     }
 
     // Fetch and save likes
     const likes = await fetchAllLikes(uid);
     if (likes.length > 0) {
-        const likesResult = saveLikes(userId, likes);
-        console.log(`   ✅ Likes: ${likesResult.saved} saved, ${likesResult.skipped} skipped`);
+        const likesResult = saveLikes(db, userId, likes);
+        log(`   ✅ Likes: ${likesResult.saved} saved, ${likesResult.skipped} skipped`);
     }
 
-    return { success: true, uid, name: profile.name };
+    return { success: true, name: profile.name };
 }
 
-// Main execution
-async function main() {
-    console.log('🚀 User Profile Fetch Test');
-    console.log(`📋 UIDs to process: ${uids.length}`);
-    console.log('─'.repeat(40));
-
-    const results = {
-        success: [],
-        failed: []
-    };
-
-    for (let i = 0; i < uids.length; i++) {
-        const uid = uids[i];
-        console.log(`\n[${i + 1}/${uids.length}] Processing...`);
-
-        try {
-            const result = await processUID(uid);
-            if (result.success) {
-                results.success.push(result);
-            } else {
-                results.failed.push(uid);
-            }
-        } catch (error) {
-            console.error(`   ❌ Error: ${error.message}`);
-            results.failed.push(uid);
-        }
-
-        // Delay between UIDs
-        if (i < uids.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+/**
+ * Ensure user profile exists. If not, fetch and save it.
+ * Main integration function for use in download features.
+ * 
+ * @param {string} uid - User's UID
+ * @param {number} platformId - Platform ID (default: 1 for Facebook)
+ * @returns {Promise<object>} {userId, hasProfile, fetched, name, error?}
+ */
+export async function ensureUserProfile(uid, platformId = PLATFORM_FACEBOOK) {
+    if (!DATABASE_ENABLED) {
+        return { userId: null, hasProfile: false, fetched: false };
     }
 
-    // Summary
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log('  📊 SUMMARY');
-    console.log('═'.repeat(60));
-    console.log(`   ✅ Success: ${results.success.length}`);
-    console.log(`   ❌ Failed: ${results.failed.length}`);
-
-    if (results.failed.length > 0) {
-        console.log(`   Failed UIDs: ${results.failed.join(', ')}`);
+    // Get or create user
+    const userId = getOrCreateUser(platformId, uid);
+    if (!userId) {
+        return { userId: null, hasProfile: false, fetched: false, error: 'Could not create user' };
     }
 
-    db.close();
-    console.log('\n🎉 Done!');
+    // Check if profile exists
+    const profileExists = hasUserProfile(userId);
+    if (profileExists) {
+        log(`📋 Profile already exists for UID: ${uid}`);
+        return { userId, hasProfile: true, fetched: false };
+    }
+
+    // Fetch and save profile
+    log(`📡 Profile not found. Fetching for UID: ${uid}...`);
+    const result = await fetchAndSaveProfile(uid, userId);
+
+    if (!result.success) {
+        return { userId, hasProfile: false, fetched: false, error: result.error };
+    }
+
+    return { userId, hasProfile: true, fetched: true, name: result.name };
 }
 
-main().catch(error => {
-    console.error('❌ Unexpected error:', error);
-    db.close();
-    process.exit(1);
-});
+/**
+ * Ensure user profiles exist for multiple UIDs
+ * @param {string[]} uids - Array of UIDs
+ * @returns {Promise<void>}
+ */
+export async function ensureUserProfileForUIDs(uids) {
+    for (const uid of uids) {
+        await ensureUserProfile(uid);
+    }
+}
