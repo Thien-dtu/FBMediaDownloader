@@ -24,9 +24,14 @@ import { getOrCreateUser } from "./database.js";
 import { checkMediaSkip, attemptHDFetch, saveMediaWithTracking, logDownloadSummary } from "./download_helpers.js";
 import { isCancelled } from "./cancellation.js";
 
-// Hàm này fetch và trả về 2 thứ:
-// 1. Toàn bộ link ảnh (max 100) từ 1 vị trí (cursor) nhất định trong album ảnh. Định dạng: [[{id: .., url: ...}, ...]
-// 2. Vị trí của ảnh tiếp theo (next cursor) (nếu có)
+/**
+ * Fetch album photos from a specific cursor position
+ * Returns up to 100 photos per request with their IDs and largest image URLs
+ * @param {Object} params - Fetch parameters
+ * @param {string} params.albumId - Facebook album ID
+ * @param {string|null} params.cursor - Pagination cursor for fetching next page
+ * @returns {Promise<{imgData: Array<{id: string, url: string}>, nextCursor: string|null}|null>} Photo data and next cursor, or null on error
+ */
 const fetchAlbumPhotosFromCursor = async ({ albumId, cursor }) => {
   // create link to fetch
   let url = `${FB_API_HOST}/${albumId}/photos?fields=largest_image&limit=100&access_token=${ACCESS_TOKEN}`;
@@ -107,7 +112,11 @@ const fetchAlbumPhotos = async ({
   return allImgsData;
 };
 
-// Fetch album info including owner's user ID
+/**
+ * Fetch album information including owner details
+ * @param {string} albumId - Facebook album ID
+ * @returns {Promise<{id: string, count: number, link: string, name: string, ownerId: string|null}|null>} Album info or null on error
+ */
 export const fetchAlbumInfo = async (albumId) => {
   // create link to fetch - now includes 'from' field to get owner info
   let url = `${FB_API_HOST}/${albumId}?fields=id,from,name,type,count,link&access_token=${ACCESS_TOKEN}`;
@@ -126,7 +135,15 @@ export const fetchAlbumInfo = async (albumId) => {
   };
 };
 
-// Tải và lưu tất cả id hình ảnh + link hình ảnh từ album, lưu vào file có tên trùng với albumId, lưu trong folder links
+/**
+ * Download and save all photo links from an album to a text file
+ * Saves IDs and URLs in the links folder for later use
+ * @param {Object} params - Download parameters
+ * @param {string} params.albumId - Facebook album ID
+ * @param {string|null} params.fromPhotoId - Start from this photo ID (optional)
+ * @param {boolean} params.isGetLargestPhoto - Whether to fetch HD versions (default: false)
+ * @returns {Promise<void>}
+ */
 export const downloadAlbumPhotoLinks = async ({
   albumId,
   fromPhotoId,
@@ -159,7 +176,15 @@ export const downloadAlbumPhotoLinks = async ({
   });
 };
 
-// Tải và lưu tất cả HÌNH ẢNH từ album, lưu từng file ảnh bằng id của ảnh và lưu hết vào folder downloads/{ownerId}/photos/
+/**
+ * Download and save all photos from an album to disk
+ * Saves photos in the owner's photos folder with optional HD quality
+ * @param {Object} params - Download parameters
+ * @param {string} params.albumId - Facebook album ID
+ * @param {string|null} params.fromPhotoId - Start from this photo ID (optional)
+ * @param {boolean} params.isGetLargestPhoto - Whether to fetch HD versions (default: false)
+ * @returns {Promise<{saved: number, skipped: number}>} Download statistics
+ */
 export const downloadAlbumPhoto = async ({
   albumId,
   fromPhotoId,

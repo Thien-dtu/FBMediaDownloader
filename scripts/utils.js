@@ -17,10 +17,14 @@ import {
   isProxyEnabled
 } from "./proxy_manager.js";
 
-// Dùng FB API lấy link hình ảnh có độ phân giải lớn nhất từ id ảnh truyền vào
-// Trả về undefined nếu không tìm thấy
+/**
+ * Fetch the largest available photo URL from Facebook API
+ * Uses the largest_image field to get the highest resolution version
+ * @param {string} photo_id - The Facebook photo ID
+ * @returns {Promise<string|undefined>} The URL of the largest image, or undefined if not found
+ */
 export const getLargestPhotoLink = async (photo_id) => {
-  let url = `${FB_API_HOST}/${photo_id}?fields=largest_image&access_token=${ACCESS_TOKEN}`;
+  const url = `${FB_API_HOST}/${photo_id}?fields=largest_image&access_token=${ACCESS_TOKEN}`;
   const json = await myFetch(url);
   return json?.largest_image?.source;
 };
@@ -127,17 +131,38 @@ export const myFetch = async (_url, options = {}) => {
   return null;
 };
 
+/**
+ * Pause execution for a specified duration
+ * @param {number} ms - Duration to sleep in milliseconds
+ * @returns {Promise<void>} Resolves after the specified duration
+ */
 export const sleep = (ms) => {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 };
 
+/**
+ * Check if a file exists at the specified path
+ * @param {string} fileDir - Path to the file to check
+ * @returns {boolean} True if the file exists, false otherwise
+ */
 export const checkFileExist = (fileDir) => fs.existsSync(fileDir);
 
+/**
+ * Delete a file if it exists
+ * @param {string} fileDir - Path to the file to delete
+ * @returns {boolean|undefined} True if file was deleted, undefined if file didn't exist
+ */
 export const deleteFile = (fileDir) =>
   checkFileExist(fileDir) && fs.unlinkSync(fileDir);
 
+/**
+ * Create a directory if it doesn't already exist
+ * Creates parent directories recursively if needed
+ * @param {string} dir - Path to the directory to create
+ * @returns {void}
+ */
 export const createIfNotExistDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -145,6 +170,13 @@ export const createIfNotExistDir = (dir) => {
   }
 };
 
+/**
+ * Save data to a file
+ * @param {string} fileName - Path to the file to save
+ * @param {string} data - Content to write to the file
+ * @param {boolean} override - If true, overwrite the file; if false, append to it (default: false)
+ * @returns {void}
+ */
 export const saveToFile = (fileName, data, override = false) => {
   try {
     fs.writeFileSync(fileName, data, { flag: override ? "w+" : "a+" });

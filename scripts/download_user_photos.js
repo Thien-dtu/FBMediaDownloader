@@ -15,6 +15,16 @@ import { checkMediaSkip, logDownloadSummary } from "./download_helpers.js";
 import { runBatchDownload } from "./batch_utils.js";
 import { isCancelled, throwIfCancelled } from "./cancellation.js";
 
+/**
+ * Fetch user's uploaded photos with pagination support
+ * Retrieves photos with album info and largest image URLs
+ * @param {Object} params - Fetch parameters
+ * @param {string} params.targetId - Facebook user ID
+ * @param {number} params.pageLimit - Maximum number of pages to fetch (default: Infinity)
+ * @param {string|null} params.fromCursor - Pagination cursor to start from
+ * @param {Function} params.pageFetchedCallback - Callback called after each page is fetched
+ * @returns {Promise<Array>} Array of all fetched photos with metadata
+ */
 const fetchUserPhotos = async ({
   targetId,
   pageLimit = Infinity,
@@ -64,6 +74,15 @@ const fetchUserPhotos = async ({
   return all_photos;
 };
 
+/**
+ * Download all uploaded photos from a user's profile
+ * Organizes photos by album in the user's photos folder
+ * @param {Object} params - Download parameters
+ * @param {string} params.targetId - Facebook user ID
+ * @param {string|null} params.fromCursor - Pagination cursor to resume from
+ * @param {number} params.pageLimit - Maximum number of pages to fetch (default: Infinity)
+ * @returns {Promise<{saved: number, skipped: number}>} Download statistics
+ */
 export const downloadUserPhotos = async ({
   targetId,
   fromCursor,
@@ -139,7 +158,13 @@ export const downloadUserPhotos = async ({
   return { saved, skipped };
 };
 
-// ========== BATCH DOWNLOAD SUPPORT ==========
+/**
+ * Batch download photos from multiple users
+ * Uses runBatchDownload for consistent progress reporting
+ * @param {string[]} userIds - Array of Facebook user IDs
+ * @param {Object} options - Download options (fromCursor, pageLimit)
+ * @returns {Promise<Array>} Array of results for each user
+ */
 export const downloadUserPhotosBatch = async (userIds, options) => {
   return runBatchDownload(userIds, downloadUserPhotos, options, {
     mediaType: 'photos'

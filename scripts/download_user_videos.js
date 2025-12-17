@@ -15,7 +15,16 @@ import { checkMediaSkip, logDownloadSummary } from "./download_helpers.js";
 import { runBatchDownload } from "./batch_utils.js";
 import { isCancelled } from "./cancellation.js";
 
-// Extract video info from a post attachment (recursive for albums)
+/**
+ * Extract video information from a post attachment
+ * Handles video types and recursively processes album sub-attachments
+ * @param {Object} attachment - Facebook post attachment object
+ * @param {string} attachment.type - Attachment type (video_autoplay, video_inline, video, album)
+ * @param {Object} attachment.target - Target object containing video ID
+ * @param {Object} attachment.media - Media object containing video source URL
+ * @param {Object} attachment.subattachments - Sub-attachments for albums
+ * @returns {Array<{id: string, source: string, description: string, has_hd_quality: boolean}>} Array of video data
+ */
 const getVideoFromAttachment = (attachment) => {
   const videos = [];
   const type = attachment?.type;
@@ -46,6 +55,16 @@ const getVideoFromAttachment = (attachment) => {
   return videos;
 };
 
+/**
+ * Fetch user's videos from their feed with pagination support
+ * Uses feed endpoint with attachments to bypass permission restrictions
+ * @param {Object} params - Fetch parameters
+ * @param {string} params.targetId - Facebook user ID
+ * @param {number} params.pageLimit - Maximum number of pages to fetch (default: Infinity)
+ * @param {string|null} params.fromCursor - Pagination cursor to start from
+ * @param {Function} params.pageFetchedCallback - Callback called after each page is fetched
+ * @returns {Promise<Array>} Array of all fetched videos with metadata
+ */
 const fetchUserVideos = async ({
   targetId,
   pageLimit = Infinity,
@@ -115,6 +134,15 @@ const fetchUserVideos = async ({
   return all_videos;
 };
 
+/**
+ * Download all videos from a user's feed
+ * Saves videos in the user's videos folder with descriptions
+ * @param {Object} params - Download parameters
+ * @param {string} params.targetId - Facebook user ID
+ * @param {string|null} params.fromCursor - Pagination cursor to resume from
+ * @param {number} params.pageLimit - Maximum number of pages to fetch (default: Infinity)
+ * @returns {Promise<{saved: number, skipped: number}>} Download statistics
+ */
 export const downloadUserVideos = async ({
   targetId,
   fromCursor,
@@ -196,7 +224,13 @@ export const downloadUserVideos = async ({
   return { saved, skipped };
 };
 
-// ========== BATCH DOWNLOAD SUPPORT ==========
+/**
+ * Batch download videos from multiple users
+ * Uses runBatchDownload for consistent progress reporting
+ * @param {string[]} userIds - Array of Facebook user IDs
+ * @param {Object} options - Download options (fromCursor, pageLimit)
+ * @returns {Promise<Array>} Array of results for each user
+ */
 export const downloadUserVideosBatch = async (userIds, options) => {
   return runBatchDownload(userIds, downloadUserVideos, options, {
     mediaType: 'videos'

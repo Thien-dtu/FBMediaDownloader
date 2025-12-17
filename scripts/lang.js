@@ -1,17 +1,42 @@
+/**
+ * Language/Internationalization Module for FB Media Downloader
+ *
+ * Provides multi-language support for UI strings.
+ * @module lang
+ */
+
 import { log } from "./logger.js";
 
-export const LANGKEY = {
+/**
+ * Available language keys
+ * @constant {Object}
+ * @property {string} vi - Vietnamese
+ * @property {string} en - English
+ */
+export const LANGKEY = Object.freeze({
   vi: "vi",
   en: "en",
-};
+});
 
+/** @type {string} Current language key */
 let currentLangKey = LANGKEY.vi;
 
+/**
+ * Set the current application language
+ * @param {string} langKey - Language key (use LANGKEY constants)
+ * @returns {void}
+ */
 export const setLang = (langKey) => {
   if (langKey in LANGKEY) currentLangKey = langKey;
   else log("ERROR. Not found lang " + langKey);
 };
 
+/**
+ * Get translated string for a key
+ * Returns '?' if key not found in current language
+ * @param {string} key - Translation key (e.g., 'pressAnyKey', 'albumInfo')
+ * @returns {string} Translated string or '?' if not found
+ */
 export const t = (key) => {
   return langs[currentLangKey || LANGKEY.en][key] || "?";
 };
@@ -90,6 +115,16 @@ export const langs = {
     fromPhotoID: "vị trí photo_id=",
     fromBeginAlbum: "đầu album",
     downloadAlbumFrom: `ĐANG TẢI DỮ LIỆU ALBUM {albumId} TỪ `,
+    // Profile fetch menu
+    fetchUserProfiles: "Tải/Cập nhật thông tin người dùng",
+    fetchProfilesTitle: "FB Media Downloader Tool > Tải thông tin người dùng",
+    enterUIDsToFetch: "> Nhập UID(s) cần tải (phân cách bằng dấu phẩy): ",
+    includeLikes: "> Có tải danh sách trang đã thích không? (0-Không, 1-Có): ",
+    profileFetched: "Đã tải thông tin",
+    profileUpdated: "Đã cập nhật thông tin",
+    profileNoChanges: "Không có thay đổi",
+    profileFailed: "Tải thất bại",
+    fieldsChanged: "Trường thay đổi",
   },
   en: {
     albumInfo: "Get album info",
@@ -169,5 +204,15 @@ export const langs = {
     fromPhotoID: "photo_id=",
     fromBeginAlbum: "begin of album",
     downloadAlbumFrom: `DOWNLOADING ALBUM {albumId} FROM `,
+    // Profile fetch menu
+    fetchUserProfiles: "Fetch/Update User Profiles",
+    fetchProfilesTitle: "FB Media Downloader Tool > Fetch User Profiles",
+    enterUIDsToFetch: "> Enter UID(s) to fetch (comma-separated): ",
+    includeLikes: "> Include page likes? (0-No, 1-Yes): ",
+    profileFetched: "Profile fetched",
+    profileUpdated: "Profile updated",
+    profileNoChanges: "No changes",
+    profileFailed: "Fetch failed",
+    fieldsChanged: "Fields changed",
   },
 };

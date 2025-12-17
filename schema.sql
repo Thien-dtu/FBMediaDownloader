@@ -97,6 +97,46 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 );
 
 -- ============================================================
+-- Table: user_profiles_history
+-- Purpose: Store historical snapshots of profile changes
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_profiles_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    snapshot_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    -- All profile fields (mirror of user_profiles)
+    name TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    about TEXT,
+    email TEXT,
+    link TEXT,
+    birthday TEXT,
+    age_range_min INTEGER,
+    age_range_max INTEGER,
+    gender TEXT,
+    hometown TEXT,
+    location TEXT,
+    relationship_status TEXT,
+    significant_other TEXT,
+    religion TEXT,
+    political TEXT,
+    work_history TEXT,
+    education_history TEXT,
+    website TEXT,
+    friend_count INTEGER,
+    hometown_id INTEGER,
+    current_location_id INTEGER,
+    significant_other_uid TEXT,
+    
+    -- Change metadata
+    changed_fields TEXT,  -- JSON array of field names that changed
+    
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ============================================================
 -- Table: fb_pages
 -- Purpose: Store Facebook page info (for likes - normalized)
 -- ============================================================

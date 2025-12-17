@@ -1,6 +1,10 @@
-// TimeLine Album là 1 album chứa tất cả hình ảnh có trong page
-// Thường thì chỉ có page mới có timeline album
-// Album này bị ẩn trên facebook (hoặc có mà mình ko biết cách tìm ở đâu), cần dùng FB graph API để lấy được id
+/**
+ * Timeline Album Download Module
+ *
+ * Timeline Albums contain all photos posted to a Facebook Page.
+ * These albums are hidden on Facebook's UI but accessible via Graph API.
+ * @module download_timeline_album
+ */
 
 import { FB_API_HOST } from "./constants.js";
 import { ACCESS_TOKEN } from "../config.js";
@@ -12,9 +16,15 @@ import { myFetch } from "./utils.js";
 import { t } from "./lang.js";
 import { log } from "./logger.js";
 
+/**
+ * Fetch the Timeline Album ID for a Facebook Page
+ * Searches through the page's albums to find the one with type "wall"
+ * @param {string} page_id - Facebook Page ID
+ * @returns {Promise<string|null>} Timeline album ID or null if not found
+ */
 export const fetchTimeLineAlbumId_FBPage = async (page_id) => {
   // create link to fetch all albums of page
-  let url = `${FB_API_HOST}/${page_id}/albums?fields=type&limit=100&access_token=${ACCESS_TOKEN}`;
+  const url = `${FB_API_HOST}/${page_id}/albums?fields=type&limit=100&access_token=${ACCESS_TOKEN}`;
 
   // fetch data
   const json = await myFetch(url);
@@ -27,6 +37,13 @@ export const fetchTimeLineAlbumId_FBPage = async (page_id) => {
   return timeLineAlbum?.id;
 };
 
+/**
+ * Download all photo links from a Page's Timeline Album to a text file
+ * @param {Object} params - Download parameters
+ * @param {string} params.page_id - Facebook Page ID
+ * @param {string|null} params.fromPhotoId - Start from this photo ID (optional)
+ * @returns {Promise<void>}
+ */
 export const downloadTimeLineAlbumPhotoLinks_FBPage = async ({
   page_id,
   fromPhotoId,
@@ -40,6 +57,13 @@ export const downloadTimeLineAlbumPhotoLinks_FBPage = async ({
   }
 };
 
+/**
+ * Download all photos from a Page's Timeline Album to disk
+ * @param {Object} params - Download parameters
+ * @param {string} params.page_id - Facebook Page ID
+ * @param {string|null} params.fromPhotoId - Start from this photo ID (optional)
+ * @returns {Promise<void>}
+ */
 export const downloadTimeLineAlbum_FBPage = async ({
   page_id,
   fromPhotoId,

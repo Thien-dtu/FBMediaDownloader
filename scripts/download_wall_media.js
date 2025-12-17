@@ -26,7 +26,16 @@ import { checkMediaSkip, attemptHDFetch, saveMediaWithTracking, logDownloadSumma
 import { runBatchDownload } from "./batch_utils.js";
 import { isCancelled } from "./cancellation.js";
 
-// Lấy ra các thông tin cần thiết (id, ảnh, video) từ dữ liệu attachment.
+/**
+ * Extract media (photos/videos) from a Facebook post attachment
+ * Handles photo, video, and album attachment types recursively
+ * @param {Object} attachment - Facebook attachment object from feed API
+ * @param {string} attachment.type - Attachment type (photo, video_autoplay, video_inline, video, album)
+ * @param {Object} attachment.target - Target object containing media ID
+ * @param {Object} attachment.media - Media object with image/video data
+ * @param {Object} attachment.subattachments - Sub-attachments for album types
+ * @returns {Array<{type: string, id: string, url: string}>} Array of extracted media items
+ */
 const getMediaFromAttachment = (attachment) => {
   const filtered_media = [];
 
@@ -125,11 +134,18 @@ const getMediaFromAttachment = (attachment) => {
   return filtered_media;
 };
 
-// fetch tất cả bài post (feed) trong wall của 1 target (user, group, page), và lấy ra các media (ảnh, video, ..) trong các bài post đó (NẾU CÓ)
-// Trả về danh sách chứa {id, url} của từng media
+/**
+ * Fetch all media from a user's wall/feed with pagination
+ * Retrieves photos and videos from post attachments
+ * @param {Object} params - Fetch parameters
+ * @param {string} params.targetId - Facebook user/page/group ID
+ * @param {number} params.pageLimit - Maximum number of pages to fetch (default: Infinity)
+ * @param {Function} params.pageFetchedCallback - Callback called after each page with media array
+ * @returns {Promise<Array<{type: string, id: string, url: string}>>} Array of all fetched media
+ */
 const fetchWallMedia = async ({
   targetId,
-  pageLimit = Infinity, // Số lần fetch, mỗi lần fetch được khoảng 25 bài post (?)
+  pageLimit = Infinity,
   pageFetchedCallback = () => { },
 }) => {
   const all_media = []; // store all media {id, url, type}
@@ -182,7 +198,16 @@ const fetchWallMedia = async ({
   return all_media;
 };
 
-// Tải và lưu tất cả id hình ảnh + link hình ảnh từ album, lưu vào file có tên trùng với albumId, lưu trong folder links
+/**
+ * Download and save all media links from a wall to a text file
+ * Saves IDs and URLs in the links folder for later use
+ * @param {Object} params - Download parameters
+ * @param {string} params.targetId - Facebook user/page/group ID
+ * @param {boolean} params.includeVideo - Whether to include videos (default: true)
+ * @param {number} params.pageLimit - Maximum pages to fetch (default: Infinity)
+ * @param {boolean} params.isGetLargestPhoto - Whether to fetch HD photo URLs (default: false)
+ * @returns {Promise<void>}
+ */
 export const downloadWallMediaLinks = async ({
   targetId,
   includeVideo = true,
@@ -214,7 +239,17 @@ export const downloadWallMediaLinks = async ({
   });
 };
 
-// Hàm này fetch tất cả các bài post của 1 target (user, group, page), và tải về media (photo, video) có trong các bài post
+/**
+ * Download all media (photos and videos) from a user's wall/feed
+ * Saves files organized in photos/ and videos/ subfolders
+ * Supports HD photo fetching and duplicate detection
+ * @param {Object} params - Download parameters
+ * @param {string} params.targetId - Facebook user/page/group ID
+ * @param {boolean} params.includeVideo - Whether to download videos (default: true)
+ * @param {number} params.pageLimit - Maximum pages to fetch (default: Infinity)
+ * @param {boolean} params.isGetLargestPhoto - Whether to fetch HD photo versions (default: false)
+ * @returns {Promise<{saved: number, skipped: number, savedPhotos: number, savedVideos: number, skippedPhotos: number, skippedVideos: number}>} Download statistics
+ */
 export const downloadWallMedia = async ({
   targetId,
   includeVideo = true,
@@ -328,7 +363,13 @@ export const downloadWallMedia = async ({
   };
 };
 
-// ========== BATCH DOWNLOAD SUPPORT ==========
+/**
+ * Batch download wall media from multiple users
+ * Uses runBatchDownload for consistent progress reporting
+ * @param {string[]} userIds - Array of Facebook user IDs
+ * @param {Object} options - Download options (includeVideo, pageLimit, isGetLargestPhoto)
+ * @returns {Promise<Array>} Array of results for each user
+ */
 export const downloadWallMediaBatch = async (userIds, options) => {
   return runBatchDownload(userIds, downloadWallMedia, options, {
     mediaType: 'wall media',
